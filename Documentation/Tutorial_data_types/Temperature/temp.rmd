@@ -1,0 +1,98 @@
+---
+title: "Temperature Tutorial"
+author: "Yuming Liu"
+date: "October 20, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load the Packages
+
+We can use the "Packages" set-up on the right hand side to install the packages, or we could just run the code # install.packages('name', dependencies=TRUE, repos='http://cran.rstudio.com/')# from the Console to install new packages.
+
+Spatial analysis in R requires multiple libraries. Package installation is done with the following syntax: install.packages(“sp”). Some of these take additional time for installation, depending on your system. The following list is comprehensive for this tutorial, as well as much spatial analysis.
+
+```{r packages,include=FALSE}
+library(sp) #spatial data wrangling & analysis
+library(rgdal) #spatial data wrangling & analysis
+library(rgeos) #spatial data wrangling & analysis
+library(leaflet) #modern data visualizations
+library(raster) #spatial data wrangling & analysis
+library(gstat) #spatial data wrangling & analysis
+library(tmap) #modern data visualizations
+library(tidyverse) # data wrangling
+```
+
+## Import Data
+
+We can read the monthly NOAA data using the following lines:
+
+```{r data}
+noaa.monthly <- read.csv("NOAA_master_monthly_final.csv")
+glimpse(noaa.monthly)
+```
+
+## Data Wrangling
+
+We use the following code to select minimum monthly temperatures from the data:
+
+```{r min}
+temp.monthly.min <- noaa.monthly %>%
+  dplyr::select(contains("min_mo"))
+```
+
+Then, for example, we isolate the data for Summer 2015.
+
+```{r summer}
+temp.monthly.min <- noaa.monthly %>%
+  dplyr::select(contains("min_mo"))
+```
+
+We get the average minumum low temperature over the summer.
+
+```{r meanlow}
+sum.mintemp.2015 <- rowSums(sum.mintemp.2015, na.rm = TRUE)
+```
+
+## Merge Temperature data to Sensors
+
+We use the following code to select sensor coordinates and other information. 
+
+```{r sensor}
+sensor.info <- noaa.monthly %>%
+  dplyr::select(STATION:elevation)
+
+#Combine the sensor info with the sensor readings
+sensor.temp.min <- cbind(sensor.info, sum.mintemp.2015)
+tail(sensor.temp.min)
+
+#Remove the 0s because 0 from the previous line, the NAs are now 0s
+sensor.temp.min[sensor.temp.min==0] <- NA
+complete.temp.min <- na.omit(sensor.temp.min)
+
+glimpse(complete.temp.min)
+```
+
+## Ploting the Results
+
+Now we set the longtitude and latitude and the projection.
+
+```{r lon/lat}
+#Set lat/lon
+coordinates(complete.temp.min) <- complete.temp.min[,c("long", "lat")]
+#Set projection to WSG84
+proj4string(complete.temp.min) <- CRS("+init=epsg:4326")
+```
+
+Then we import the map of Chicago Community Areas.
+
+```{r}
+chi.map <- readOGR("Chicago")
+
+chi.map <- spTransform(chi.map, CRS("+init=epsg:4326 +proj=longlat +datum=WGS84 +no_defs +ellps=WGS84
+                                    +towgs84=0,0,0"))
+```
+
