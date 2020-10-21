@@ -1,0 +1,196 @@
+---
+title: "PM2.5 Tutorial"
+author: "Yuming Liu"
+date: "October 13, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+```
+
+## Load the Packages
+
+We can use the "Packages" set-up on the right hand side to install the packages, or we could just run the code # install.packages('name', dependencies=TRUE, repos='http://cran.rstudio.com/')# from the Console to install new packages.
+
+Spatial analysis in R requires multiple libraries. Package installation is done with the following syntax: install.packages(“sp”). Some of these take additional time for installation, depending on your system. The following list is comprehensive for this tutorial, as well as much spatial analysis.
+
+```{r packages,include=FALSE}
+library("sp") #spatial data wrangling & analysis
+library("rgdal")
+library("rgeos") #spatial data wrangling & analysis
+library(raster) #spatial data wrangling & analysis
+library(adehabitatHR) # Spatial data wrangling
+library(tmap)  #modern data visualizations
+library(data.table)  
+library(gstat) #spatial data wrangling & analysis
+library(xts) #data wrangling & analysis
+```
+
+## Loading the Shapefiles
+
+For ploting the PM2.5, we need to read the community area shapefiles and the shapefiles of the epa sensors.
+
+```{r shapefiles1}
+Chicago <- readOGR(".", "CommAreas")
+plot(Chicago)
+```
+```{r shapefiles2}
+EPA.Points <- readOGR(".", "PM2.5YearlyShapefile_CLEAN")
+str(EPA.Points@data)
+EPA.Points@data
+plot(EPA.Points)
+```
+
+## Filtering the Sensors
+
+We need to take out the sensor points that are located too far from Chicago.
+
+```{r filter}
+test <- EPA.Points
+test<- test[-c(24,25), ]
+str(test@data)
+plot(test)
+EPA.Points <- test
+```
+
+
+## Generate the IDW
+
+To set up the grid, we define the sample grid based on the extent of the "EPA.Points" file.
+
+```{r}
+grid <-spsample(EPA.Points, type = 'regular', n = 10000)
+```
+
+Then we run the IDW function from the gstat package for the variable of interest in EPA.Points.
+
+```{r}
+idw <- idw(EPA.Points$X2017MPC ~ 1, EPA.Points, newdata = grid)
+
+idw.output = as.data.frame(idw)
+names(idw.output)[1:3] <- c("long", "lat", "prediction")
+```
+
+Then we create the spatial points data frame.
+
+```{r}
+spg <- idw.output
+coordinates(spg) <- ~ long + lat
+```
+
+The last step is to coerce the grid to Spatial Pixels Data Frame and to raster.
+
+```{r}
+gridded(spg) <- TRUE
+
+raster_idw <- raster(spg)
+```
+
+## Set the Projection
+
+We use the following code to set the standard of the projection.
+
+```{r}
+projection(raster_idw) <- CRS("+init=epsg:4326")
+```
+
+## Plot the IDW Results
+
+Firstly, we mask raster by Chicago polygon file.
+
+```{r}
+masked_idw <- mask(raster_idw, Chicago)
+```
+
+Then we plot the masked raster.
+
+```{r}
+tm_shape(masked_idw) + tm_raster("prediction", style = "quantile", n = 100, legend.show = FALSE)
+```
+
+The previous raster file only shows the IDW result. Then We plot the masked raster with point emissions.
+
+```{r}
+tm_shape(masked_idw) + tm_raster("prediction", style = "quantile", n = 100, legend.show = FALSE) +
+  tm_shape(EPA.Points) + tm_bubbles(size = "X2017MPC", col = "X2017MPC", palette = "Blues", 
+                                    scale = 0.5, style = "quantile", legend.size.show = FALSE, title.col = "2017 PM2.5 Mean Concentration")
+
+tmap_mode("view")
+
+tm_shape(masked_idw) + 
+  tm_raster("prediction", style = "quantile", 
+            n = 100, alpha = 0.4, legend.show = FALSE) + 
+  tm_shape(EPA.Points) + 
+  tm_bubbles(col = "X2017MPC", 
+             palette = "Blues", 
+             scale = .5, 
+             style = "quantile", 
+             title.col = "2017 Mean PM2.5") 
+
+tmap_mode("plot")
+```
+
+We plot the masked raster with Community Area overlay added.
+
+```{r}
+tm_shape(masked_idw, bbox=Chicago) + 
+  tm_raster("prediction", style = "quantile", pal = "Blues", n = 5, legend.show = TRUE, title = "PM2.5 prediction") + 
+  tm_shape(Chicago) + tm_borders(alpha=.5,) + 
+  tm_layout(frame = F, legend.position = c("left","bottom"))
+
+```
+
+## Combine the shapefiles and the PM2.5 values
+
+Extracting the Pixel Values from the Raster for chicago Community Areas and removing NAs, we have the cleaned masked IDW results.
+
+```{r}
+chi.ave <- raster::extract(masked_idw, Chicago)
+
+chi.ave <- lapply(chi.ave, na.omit)
+```
+
+Then we calculate the average value by Community Areas.
+
+```{r}
+ca.ave <- lapply(chi.ave, FUN=mean)
+ca.ave  <- unlist(ca.ave )
+```
+
+We attach the Mean Values to Community Area information by grabing Community Area names/IDs from Chicago shapefiles. 
+
+```{r}
+chi.info <- cbind(as.integer(as.character(Chicago@data$area_numbe)))
+head(chi.info)
+```
+
+Then we attach EPA Average numbers to the data frame.
+
+```{r}
+chica.final <- cbind(chi.info, ca.ave)
+colnames(chica.final) <- c("area_numbe", "PM2.5")
+as.data.frame(chica.final)
+
+Chicago<- merge(Chicago, chica.final, by = "area_numbe")
+head(Chicago@data)
+```
+
+Now we plot the masked raster with Community Area overlay.
+
+```{r}
+tm_shape(Chicago) + 
+  tm_fill("PM2.5", style = "quantile", n = 5, pal = "Blues",legend.show = TRUE, title = "PM2.5 by CA") + 
+  tm_shape(Chicago) + tm_borders(alpha=.5,) + 
+  tm_layout(frame = F, legend.position = c("left","bottom"))
+```
+
+## Save the Results
+
+Finally, we write the data to a CSV file. 
+
+```{r}
+write.csv(chica.final, "PM5_aggregated.csv")
+```
+
